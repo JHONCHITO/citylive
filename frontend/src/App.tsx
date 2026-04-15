@@ -62,7 +62,7 @@ function App() {
   // ===============================
   const obtenerClima = async () => {
     try {
-      const res = await axios.get("http://localhost:3000/api/clima");
+      const res = await axios.get("https://citylive.onrender.com/api/clima");
       if (res.data) setClima(res.data);
     } catch {
       setClima({
@@ -80,7 +80,7 @@ function App() {
   const obtenerUbicacion = async () => {
     setLoading(true);
     try {
-      const res = await axios.get("http://localhost:3000/ubicacion/esp32_1");
+      const res = await axios.get("https://citylive.onrender.com/ubicacion/esp32_1");
 
       if (res.data?.lat && res.data?.lng) {
         const nuevaPos: [number, number] = [Number(res.data.lat), Number(res.data.lng)];
@@ -106,7 +106,7 @@ function App() {
   // ===============================
   const obtenerHistorial = async () => {
     try {
-      const res = await axios.get("http://localhost:3000/ubicaciones/esp32_1");
+      const res = await axios.get("https://citylive.onrender.com/ubicaciones/esp32_1");
       if (Array.isArray(res.data)) setHistorial(res.data);
     } catch {}
   };
