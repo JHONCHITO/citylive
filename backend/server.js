@@ -1,0 +1,172 @@
+// ===============================
+// 🚀 CITYLIVE BACKEND FINAL PRO
+// ===============================
+
+require("dotenv").config();
+
+const express = require("express");
+const cors = require("cors");
+const mongoose = require("mongoose");
+const axios = require("axios");
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// 🔑 TU API KEY (WeatherAPI)
+const API_KEY = "d1bbe40a585a4baa80955926261504";
+
+// ===============================
+// 🔐 MIDDLEWARES
+// ===============================
+app.use(cors());
+app.use(express.json());
+
+// ===============================
+// 🔥 MONGODB
+// ===============================
+mongoose.connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/citylive")
+  .then(() => console.log("✅ MongoDB conectado"))
+  .catch(err => console.log("❌ Error Mongo:", err));
+
+// ===============================
+// 📦 MODELOS
+// ===============================
+const IoT = mongoose.model("IoT", new mongoose.Schema({
+  temp: Number,
+  hum: Number,
+  pres: Number,
+  desc: String,
+  fecha: { type: Date, default: Date.now }
+}));
+
+const Ubicacion = mongoose.model("Ubicacion", new mongoose.Schema({
+  dispositivoId: String,
+  lat: Number,
+  lng: Number,
+  fecha: { type: Date, default: Date.now }
+}));
+
+// ===============================
+// 🏠 ROOT
+// ===============================
+app.get("/", (req, res) => {
+  res.send("🚀 API CITYLIVE FUNCIONANDO");
+});
+
+// ===============================
+// 🧪 TEST
+// ===============================
+app.get("/test", (req, res) => {
+  res.json({ ok: true });
+});
+
+// ===============================
+// 🌦️ CLIMA REAL (WEATHERAPI)
+// ===============================
+app.get("/api/clima", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `http://api.weatherapi.com/v1/current.json?key=${API_KEY}&q=Cali&aqi=no`
+    );
+
+    const data = response.data;
+
+    console.log("🌦️ CLIMA REAL:", data);
+
+    res.json({
+      temperatura: data.current.temp_c,
+      humedad: data.current.humidity,
+      presion: data.current.pressure_mb,
+      descripcion: data.current.condition.text
+    });
+
+  } catch (error) {
+    console.log("❌ ERROR CLIMA:", error.message);
+
+    res.status(500).json({
+      error: "No se pudo obtener el clima"
+    });
+  }
+});
+
+// ===============================
+// 📡 GUARDAR DATOS ESP32
+// ===============================
+app.post("/api/iot", async (req, res) => {
+  try {
+    const data = new IoT(req.body);
+    await data.save();
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Error guardando IoT" });
+  }
+});
+
+// ===============================
+// 📡 OBTENER DATOS ESP32
+// ===============================
+app.get("/api/iot", async (req, res) => {
+  const datos = await IoT.find().sort({ fecha: -1 }).limit(10);
+  res.json(datos);
+});
+
+// ===============================
+// 📍 GUARDAR UBICACIÓN
+// ===============================
+app.post("/ubicacion", async (req, res) => {
+  try {
+    const data = new Ubicacion(req.body);
+    await data.save();
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Error ubicación" });
+  }
+});
+
+// ===============================
+// 📍 ÚLTIMA UBICACIÓN
+// ===============================
+app.get("/ubicacion/:id", async (req, res) => {
+  const data = await Ubicacion.findOne({
+    dispositivoId: req.params.id
+  }).sort({ fecha: -1 });
+
+  res.json(data);
+});
+
+// ===============================
+// 📍 HISTORIAL
+// ===============================
+app.get("/ubicaciones/:id", async (req, res) => {
+  const data = await Ubicacion.find({
+    dispositivoId: req.params.id
+  }).sort({ fecha: -1 }).limit(50);
+
+  res.json(data);
+});
+
+// ===============================
+// 🚀 START SERVER
+// ===============================
+app.listen(PORT, () => {
+  console.log(`🔥 http://localhost:${PORT}`);
+});
+// ===============================
+// 🔥 SIMULADOR AUTOMÁTICO
+// ===============================
+setInterval(async () => {
+  try {
+    const lat = 3.45 + (Math.random() * 0.01);
+    const lng = -76.53 + (Math.random() * 0.01);
+
+    await new Ubicacion({
+      dispositivoId: "esp32_1",
+      lat,
+      lng
+    }).save();
+
+    console.log("📍 Ubicación simulada guardada");
+  } catch (err) {
+    console.log("Error simulador:", err);
+  }
+}, 10000); // 🔥 cada 10 segundos
