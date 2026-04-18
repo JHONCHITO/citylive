@@ -171,7 +171,7 @@ function App() {
             </Marker>
 
             {/* TODOS LOS DISPOSITIVOS */}
-            {historial.map((p, i) => (
+            {historial.slice(0, 1).map((p, i) => (
               <Marker key={i} position={[p.lat, p.lng]}>
                 <Popup>
                   📍 {p.dispositivoId || "Dispositivo"}

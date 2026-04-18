@@ -172,23 +172,3 @@ app.get("/ubicaciones", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`🔥 http://localhost:${PORT}`);
 });
-
-// ===============================
-// 🔥 SIMULADOR (OPCIONAL)
-// ===============================
-setInterval(async () => {
-  try {
-    const lat = 3.45 + (Math.random() * 0.01);
-    const lng = -76.53 + (Math.random() * 0.01);
-
-    await new Ubicacion({
-      dispositivoId: "esp32_1",
-      lat,
-      lng
-    }).save();
-
-    console.log("📍 Ubicación simulada");
-  } catch (err) {
-    console.log("Error simulador:", err);
-  }
-}, 10000);
