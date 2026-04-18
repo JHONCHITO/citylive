@@ -12,7 +12,6 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🔑 API KEY (MEJOR DESDE .env)
 const API_KEY = process.env.WEATHER_API_KEY || "TU_API_KEY_AQUI";
 
 app.use(cors());
@@ -21,10 +20,7 @@ app.use(express.json());
 // ===============================
 // 🔥 MONGODB
 // ===============================
-mongoose.connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/citylive", {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
+mongoose.connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/citylive")
   .then(() => console.log("✅ MongoDB conectado"))
   .catch(err => console.log("❌ Error Mongo:", err));
 
@@ -32,33 +28,36 @@ mongoose.connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/citylive", 
 // 📦 MODELO
 // ===============================
 const Ubicacion = mongoose.model("Ubicacion", new mongoose.Schema({
-  dispositivoId: { type: String, required: true },
-  lat: { type: Number, required: true },
-  lng: { type: Number, required: true },
+  dispositivoId: String,
+  lat: Number,
+  lng: Number,
   fecha: { type: Date, default: Date.now }
 }));
 
 // ===============================
-// 🧪 HEALTH CHECK
+// 🧪 ROOT
 // ===============================
 app.get("/", (req, res) => {
   res.send("🚀 CITYLIVE API OK");
 });
 
 // ===============================
-// 🌦️ CLIMA DINÁMICO
+// 🌦️ CLIMA (CORREGIDO)
 // ===============================
 app.get("/api/clima", async (req, res) => {
   try {
-    const { lat, lng } = req.query;
+    let { lat, lng } = req.query;
 
-    if (!lat || !lng) {
-      return res.status(400).json({ error: "Faltan coordenadas" });
+    lat = parseFloat(lat);
+    lng = parseFloat(lng);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      return res.status(400).json({ error: "Coordenadas inválidas" });
     }
 
-    const url = `http://api.weatherapi.com/v1/current.json?key=${API_KEY}&q=${lat},${lng}&aqi=no`;
-
-    const r = await axios.get(url);
+    const r = await axios.get(
+      `http://api.weatherapi.com/v1/current.json?key=${API_KEY}&q=${lat},${lng}&aqi=no`
+    );
 
     res.json({
       temperatura: r.data.current.temp_c,
@@ -69,12 +68,12 @@ app.get("/api/clima", async (req, res) => {
 
   } catch (err) {
     console.log("❌ ERROR CLIMA:", err.message);
-    res.status(500).json({ error: "Error obteniendo clima" });
+    res.status(500).json({ error: "Error clima" });
   }
 });
 
 // ===============================
-// 📍 GUARDAR UBICACIÓN (ANTI-SPAM)
+// 📍 GUARDAR UBICACIÓN (MEJORADO)
 // ===============================
 app.post("/ubicacion", async (req, res) => {
   try {
@@ -84,17 +83,20 @@ app.post("/ubicacion", async (req, res) => {
       return res.status(400).json({ error: "Datos incompletos" });
     }
 
-    // 🔥 evitar duplicados seguidos
+    // 🔥 validar números
+    if (isNaN(lat) || isNaN(lng)) {
+      return res.status(400).json({ error: "Coordenadas inválidas" });
+    }
+
+    // 🔥 evitar duplicados
     const ultima = await Ubicacion.findOne({ dispositivoId }).sort({ fecha: -1 });
 
     if (ultima) {
-      const mismaPos =
+      const igual =
         Math.abs(ultima.lat - lat) < 0.00001 &&
         Math.abs(ultima.lng - lng) < 0.00001;
 
-      if (mismaPos) {
-        return res.json({ ok: true, msg: "Sin cambios" });
-      }
+      if (igual) return res.json({ ok: true, msg: "Sin cambios" });
     }
 
     await new Ubicacion({ dispositivoId, lat, lng }).save();
@@ -102,13 +104,13 @@ app.post("/ubicacion", async (req, res) => {
     res.json({ ok: true });
 
   } catch (err) {
-    console.log("❌ ERROR GUARDANDO:", err.message);
-    res.status(500).json({ error: "Error guardando ubicación" });
+    console.log("❌ ERROR GUARDAR:", err.message);
+    res.status(500).json({ error: "Error guardando" });
   }
 });
 
 // ===============================
-// 🔥 ACTIVOS (ÚLTIMOS 15 SEGUNDOS)
+// 🔥 ACTIVOS (MEJORADO)
 // ===============================
 app.get("/ubicaciones", async (req, res) => {
   try {
@@ -122,7 +124,6 @@ app.get("/ubicaciones", async (req, res) => {
           _id: "$dispositivoId",
           lat: { $first: "$lat" },
           lng: { $first: "$lng" },
-          fecha: { $first: "$fecha" },
           dispositivoId: { $first: "$dispositivoId" }
         }
       }
@@ -131,26 +132,26 @@ app.get("/ubicaciones", async (req, res) => {
     res.json(data);
 
   } catch (err) {
-    console.log("❌ ERROR ACTIVOS:", err.message);
-    res.status(500).json({ error: "Error obteniendo activos" });
+    res.status(500).json({ error: "Error activos" });
   }
 });
 
 // ===============================
-// 📊 HISTORIAL POR DISPOSITIVO
+// 📊 HISTORIAL (MEJORADO)
 // ===============================
 app.get("/historial/:id", async (req, res) => {
   try {
+    const limit = parseInt(req.query.limit) || 50;
+
     const data = await Ubicacion.find({
       dispositivoId: req.params.id
     })
       .sort({ fecha: -1 })
-      .limit(50);
+      .limit(limit);
 
     res.json(data);
 
-  } catch (err) {
-    console.log("❌ ERROR HISTORIAL:", err.message);
+  } catch {
     res.status(500).json({ error: "Error historial" });
   }
 });
@@ -159,26 +160,29 @@ app.get("/historial/:id", async (req, res) => {
 // 🧠 INFO ACTIVOS
 // ===============================
 app.get("/activos", async (req, res) => {
-  try {
-    const hace15s = new Date(Date.now() - 15000);
+  const hace15s = new Date(Date.now() - 15000);
 
-    const count = await Ubicacion.countDocuments({
-      fecha: { $gte: hace15s }
-    });
+  const count = await Ubicacion.countDocuments({
+    fecha: { $gte: hace15s }
+  });
 
-    res.json({ activos: count });
-
-  } catch {
-    res.status(500).json({ error: "Error activos count" });
-  }
+  res.json({ activos: count });
 });
 
 // ===============================
-// 🧹 LIMPIAR (SOLO DEV)
+// 🧹 LIMPIAR
 // ===============================
 app.get("/limpiar", async (req, res) => {
   await Ubicacion.deleteMany({});
-  res.send("🧹 Base limpiada");
+  res.send("🧹 Base limpia");
+});
+
+// ===============================
+// 🔥 OPCIONAL ESP32 (COMPATIBLE)
+// ===============================
+app.post("/api/iot", async (req, res) => {
+  console.log("📡 ESP32:", req.body);
+  res.json({ ok: true });
 });
 
 // ===============================
