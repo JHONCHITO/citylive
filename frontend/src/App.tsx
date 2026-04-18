@@ -4,9 +4,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-// ===============================
-// 🔧 FIX ICONOS
-// ===============================
+// FIX ICONOS
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
@@ -14,26 +12,14 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
 });
 
-// ===============================
-// 🧩 TIPOS
-// ===============================
-interface Clima {
-  temperatura: number;
-  humedad: number;
-  presion: number;
-  descripcion: string;
-}
-
+// TIPOS
 interface Ubicacion {
   lat: number;
   lng: number;
-  fecha?: string;
   dispositivoId?: string;
 }
 
-// ===============================
-// 🗺️ CENTRAR MAPA
-// ===============================
+// MAPA AUTO CENTER
 function MapUpdater({ center }: { center: [number, number] }) {
   const map = useMap();
   useEffect(() => {
@@ -42,145 +28,113 @@ function MapUpdater({ center }: { center: [number, number] }) {
   return null;
 }
 
-// ===============================
-// 🚀 APP
-// ===============================
 function App() {
-  const [clima, setClima] = useState<Clima>({
-    temperatura: 0,
-    humedad: 0,
-    presion: 0,
-    descripcion: "Cargando..."
-  });
-
-  const [pos, setPos] = useState<[number, number]>([3.4516, -76.5320]);
+  const [pos, setPos] = useState<[number, number]>([3.45, -76.53]);
   const [historial, setHistorial] = useState<Ubicacion[]>([]);
+  const [deviceId, setDeviceId] = useState("");
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   // ===============================
-  // 🌦️ CLIMA
-  // ===============================
-  const obtenerClima = async () => {
-    try {
-      const res = await axios.get("https://citylive.onrender.com/api/clima");
-      setClima(res.data);
-    } catch {}
-  };
-
-  // ===============================
-  // 📊 TODOS LOS DISPOSITIVOS
-  // ===============================
-  const obtenerHistorial = async () => {
-    try {
-      const res = await axios.get("https://citylive.onrender.com/ubicaciones/celular_1");
-      if (Array.isArray(res.data)) setHistorial(res.data);
-    } catch (err) {
-      console.log("Error historial", err);
-    }
-  };
-
-  // ===============================
-  // 📱 GPS CELULAR
+  // 🔥 ID ÚNICO POR DISPOSITIVO
   // ===============================
   useEffect(() => {
-    const watchId = navigator.geolocation.watchPosition(
-      async (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
+    let id = localStorage.getItem("device_id");
 
-        setPos([lat, lng]);
+    if (!id) {
+      id = "device_" + Math.floor(Math.random() * 100000);
+      localStorage.setItem("device_id", id);
+    }
 
-        await axios.post("https://citylive.onrender.com/ubicacion", {
-          dispositivoId: "celular_1",
-          lat,
-          lng
-        });
-      },
-      (err) => console.log(err),
-      { enableHighAccuracy: true }
-    );
-
-    return () => navigator.geolocation.clearWatch(watchId);
+    setDeviceId(id);
   }, []);
 
   // ===============================
-  // 🔁 LOOP
+  // 📱 RESPONSIVE REAL
   // ===============================
   useEffect(() => {
-    obtenerClima();
-    obtenerHistorial();
+    const resize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
 
-    const interval = setInterval(() => {
-      obtenerClima();
-      obtenerHistorial();
-    }, 5000);
+  // ===============================
+  // 📡 GPS
+  // ===============================
+  useEffect(() => {
+    const watch = navigator.geolocation.watchPosition(async (p) => {
+      const lat = p.coords.latitude;
+      const lng = p.coords.longitude;
 
-    return () => clearInterval(interval);
+      setPos([lat, lng]);
+
+      await axios.post("https://citylive.onrender.com/ubicacion", {
+        dispositivoId: deviceId,
+        lat,
+        lng
+      });
+
+    });
+
+    return () => navigator.geolocation.clearWatch(watch);
+  }, [deviceId]);
+
+  // ===============================
+  // 🔄 CARGAR DISPOSITIVOS
+  // ===============================
+  useEffect(() => {
+    const load = async () => {
+      const res = await axios.get("https://citylive.onrender.com/ubicaciones");
+      setHistorial(res.data);
+    };
+
+    load();
+    const i = setInterval(load, 5000);
+    return () => clearInterval(i);
   }, []);
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
 
-      {/* HEADER */}
-      <div style={{
-        background: "#111",
-        color: "#fff",
-        padding: "10px",
-        textAlign: "center"
-      }}>
-        🚀 CityLive - MULTI GPS
+      <div style={{ background: "#000", color: "#fff", padding: 10 }}>
+        🚀 CityLive PRO
       </div>
 
-      {/* CONTENIDO */}
       <div style={{
         flex: 1,
         display: "flex",
-        flexDirection: window.innerWidth < 768 ? "column" : "row"
+        flexDirection: isMobile ? "column" : "row"
       }}>
 
         {/* PANEL */}
         <div style={{
-          width: window.innerWidth < 768 ? "100%" : "300px",
-          background: "#f5f5f5",
-          padding: "10px"
+          width: isMobile ? "100%" : "280px",
+          background: "#f0f0f0",
+          padding: 10
         }}>
-          <strong>🌡️ {clima.temperatura}°C</strong><br />
-          📍 {pos[0].toFixed(5)}, {pos[1].toFixed(5)}
-
-          <hr />
-          <strong>📊 Historial</strong>
-
-          {historial.slice(0, 10).map((item, i) => (
-            <div key={i}>
-              📍 {item.dispositivoId}
-              <br />
-              {item.lat.toFixed(5)}, {item.lng.toFixed(5)}
-            </div>
-          ))}
+          <strong>📍 TU ID:</strong>
+          <br /> {deviceId}
         </div>
 
         {/* MAPA */}
-        <div style={{ flex: 1 }}>
-          <MapContainer center={pos} zoom={15} style={{ height: "100%", width: "100%" }}>
+        <div style={{
+          flex: 1,
+          height: isMobile ? "60vh" : "100%"
+        }}>
+          <MapContainer center={pos} zoom={15} style={{ height: "100%" }}>
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-
             <MapUpdater center={pos} />
 
             {/* TU UBICACIÓN */}
             <Marker position={pos}>
-              <Popup>📍 Tú (celular)</Popup>
+              <Popup>📱 Tú</Popup>
             </Marker>
 
-            {/* TODOS LOS DISPOSITIVOS */}
-            {historial.slice(0, 1).map((p, i) => (
-              <Marker key={i} position={[p.lat, p.lng]}>
-                <Popup>
-                  📍 {p.dispositivoId || "Dispositivo"}
-                  <br />
-                  {p.lat.toFixed(5)}, {p.lng.toFixed(5)}
-                </Popup>
+            {/* OTROS DISPOSITIVOS */}
+            {historial.map((d, i) => (
+              <Marker key={i} position={[d.lat, d.lng]}>
+                <Popup>{d.dispositivoId}</Popup>
               </Marker>
             ))}
-
           </MapContainer>
         </div>
 
