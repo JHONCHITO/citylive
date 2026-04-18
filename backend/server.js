@@ -1,5 +1,5 @@
 // ===============================
-// 🚀 CITYLIVE BACKEND FINAL PRO
+// 🚀 CITYLIVE BACKEND PRO FINAL
 // ===============================
 
 require("dotenv").config();
@@ -61,7 +61,7 @@ app.get("/test", (req, res) => {
 });
 
 // ===============================
-// 🌦️ CLIMA REAL
+// 🌦️ CLIMA
 // ===============================
 app.get("/api/clima", async (req, res) => {
   try {
@@ -79,11 +79,7 @@ app.get("/api/clima", async (req, res) => {
     });
 
   } catch (error) {
-    console.log("❌ ERROR CLIMA:", error.message);
-
-    res.status(500).json({
-      error: "No se pudo obtener el clima"
-    });
+    res.status(500).json({ error: "Error clima" });
   }
 });
 
@@ -112,15 +108,22 @@ app.get("/api/iot", async (req, res) => {
 // 👉 GUARDAR
 app.post("/ubicacion", async (req, res) => {
   try {
-    const data = new Ubicacion(req.body);
+    const { dispositivoId, lat, lng } = req.body;
+
+    if (!dispositivoId || !lat || !lng) {
+      return res.status(400).json({ error: "Datos incompletos" });
+    }
+
+    const data = new Ubicacion({ dispositivoId, lat, lng });
     await data.save();
+
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Error ubicación" });
   }
 });
 
-// 👉 ÚLTIMA POR ID
+// 👉 ÚLTIMA UBICACIÓN POR DISPOSITIVO
 app.get("/ubicacion/:id", async (req, res) => {
   const data = await Ubicacion.findOne({
     dispositivoId: req.params.id
@@ -129,7 +132,7 @@ app.get("/ubicacion/:id", async (req, res) => {
   res.json(data);
 });
 
-// 👉 HISTORIAL POR ID
+// 👉 HISTORIAL POR DISPOSITIVO
 app.get("/ubicaciones/:id", async (req, res) => {
   const data = await Ubicacion.find({
     dispositivoId: req.params.id
@@ -139,12 +142,21 @@ app.get("/ubicaciones/:id", async (req, res) => {
 });
 
 // ===============================
-// 🔥 🔥 NUEVO ENDPOINT CLAVE 🔥 🔥
-// 👉 TODOS LOS DISPOSITIVOS
+// 🔥 🔥 ENDPOINT PRO 🔥 🔥
+// 👉 FILTRAR POR QUERY (IMPORTANTE)
 // ===============================
 app.get("/ubicaciones", async (req, res) => {
   try {
-    const data = await Ubicacion.find()
+    const { id } = req.query;
+
+    let filtro = {};
+
+    // 👉 si envías ?id=celular_1 solo muestra ese
+    if (id) {
+      filtro.dispositivoId = id;
+    }
+
+    const data = await Ubicacion.find(filtro)
       .sort({ fecha: -1 })
       .limit(100);
 

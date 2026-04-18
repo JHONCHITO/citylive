@@ -71,7 +71,7 @@ function App() {
   // ===============================
   const obtenerHistorial = async () => {
     try {
-      const res = await axios.get("https://citylive.onrender.com/ubicaciones");
+      const res = await axios.get("https://citylive.onrender.com/ubicaciones/celular_1");
       if (Array.isArray(res.data)) setHistorial(res.data);
     } catch (err) {
       console.log("Error historial", err);
