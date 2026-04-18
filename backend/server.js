@@ -12,7 +12,7 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🔑 TU API KEY (WeatherAPI)
+// 🔑 API KEY
 const API_KEY = "d1bbe40a585a4baa80955926261504";
 
 // ===============================
@@ -61,7 +61,7 @@ app.get("/test", (req, res) => {
 });
 
 // ===============================
-// 🌦️ CLIMA REAL (WEATHERAPI)
+// 🌦️ CLIMA REAL
 // ===============================
 app.get("/api/clima", async (req, res) => {
   try {
@@ -70,8 +70,6 @@ app.get("/api/clima", async (req, res) => {
     );
 
     const data = response.data;
-
-    console.log("🌦️ CLIMA REAL:", data);
 
     res.json({
       temperatura: data.current.temp_c,
@@ -90,7 +88,7 @@ app.get("/api/clima", async (req, res) => {
 });
 
 // ===============================
-// 📡 GUARDAR DATOS ESP32
+// 📡 IoT
 // ===============================
 app.post("/api/iot", async (req, res) => {
   try {
@@ -102,17 +100,16 @@ app.post("/api/iot", async (req, res) => {
   }
 });
 
-// ===============================
-// 📡 OBTENER DATOS ESP32
-// ===============================
 app.get("/api/iot", async (req, res) => {
   const datos = await IoT.find().sort({ fecha: -1 }).limit(10);
   res.json(datos);
 });
 
 // ===============================
-// 📍 GUARDAR UBICACIÓN
+// 📍 UBICACIÓN
 // ===============================
+
+// 👉 GUARDAR
 app.post("/ubicacion", async (req, res) => {
   try {
     const data = new Ubicacion(req.body);
@@ -123,9 +120,7 @@ app.post("/ubicacion", async (req, res) => {
   }
 });
 
-// ===============================
-// 📍 ÚLTIMA UBICACIÓN
-// ===============================
+// 👉 ÚLTIMA POR ID
 app.get("/ubicacion/:id", async (req, res) => {
   const data = await Ubicacion.findOne({
     dispositivoId: req.params.id
@@ -134,9 +129,7 @@ app.get("/ubicacion/:id", async (req, res) => {
   res.json(data);
 });
 
-// ===============================
-// 📍 HISTORIAL
-// ===============================
+// 👉 HISTORIAL POR ID
 app.get("/ubicaciones/:id", async (req, res) => {
   const data = await Ubicacion.find({
     dispositivoId: req.params.id
@@ -146,13 +139,30 @@ app.get("/ubicaciones/:id", async (req, res) => {
 });
 
 // ===============================
+// 🔥 🔥 NUEVO ENDPOINT CLAVE 🔥 🔥
+// 👉 TODOS LOS DISPOSITIVOS
+// ===============================
+app.get("/ubicaciones", async (req, res) => {
+  try {
+    const data = await Ubicacion.find()
+      .sort({ fecha: -1 })
+      .limit(100);
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: "Error obteniendo ubicaciones" });
+  }
+});
+
+// ===============================
 // 🚀 START SERVER
 // ===============================
 app.listen(PORT, () => {
   console.log(`🔥 http://localhost:${PORT}`);
 });
+
 // ===============================
-// 🔥 SIMULADOR AUTOMÁTICO
+// 🔥 SIMULADOR (OPCIONAL)
 // ===============================
 setInterval(async () => {
   try {
@@ -165,8 +175,8 @@ setInterval(async () => {
       lng
     }).save();
 
-    console.log("📍 Ubicación simulada guardada");
+    console.log("📍 Ubicación simulada");
   } catch (err) {
     console.log("Error simulador:", err);
   }
-}, 10000); // 🔥 cada 10 segundos
+}, 10000);

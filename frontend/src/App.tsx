@@ -28,6 +28,7 @@ interface Ubicacion {
   lat: number;
   lng: number;
   fecha?: string;
+  dispositivoId?: string;
 }
 
 // ===============================
@@ -66,42 +67,33 @@ function App() {
   };
 
   // ===============================
-  // 📊 HISTORIAL
+  // 📊 TODOS LOS DISPOSITIVOS
   // ===============================
   const obtenerHistorial = async () => {
     try {
-      const res = await axios.get("https://citylive.onrender.com/ubicaciones/celular_1");
+      const res = await axios.get("https://citylive.onrender.com/ubicaciones");
       if (Array.isArray(res.data)) setHistorial(res.data);
-    } catch {}
+    } catch (err) {
+      console.log("Error historial", err);
+    }
   };
 
   // ===============================
-  // 📱 GPS REAL DEL CELULAR
+  // 📱 GPS CELULAR
   // ===============================
   useEffect(() => {
-    if (!navigator.geolocation) {
-      alert("GPS no disponible");
-      return;
-    }
-
     const watchId = navigator.geolocation.watchPosition(
       async (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
 
-        // 🔥 actualizar mapa
         setPos([lat, lng]);
 
-        // 🔥 enviar al backend
-        try {
-          await axios.post("https://citylive.onrender.com/ubicacion", {
-            dispositivoId: "celular_1",
-            lat,
-            lng
-          });
-        } catch (err) {
-          console.log("Error enviando GPS", err);
-        }
+        await axios.post("https://citylive.onrender.com/ubicacion", {
+          dispositivoId: "celular_1",
+          lat,
+          lng
+        });
       },
       (err) => console.log(err),
       { enableHighAccuracy: true }
@@ -120,86 +112,75 @@ function App() {
     const interval = setInterval(() => {
       obtenerClima();
       obtenerHistorial();
-    }, 10000);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, []);
 
   return (
-    <div style={{ height: "100vh", width: "100vw", display: "flex", flexDirection: "column" }}>
+    <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
 
       {/* HEADER */}
       <div style={{
         background: "#111",
         color: "#fff",
         padding: "10px",
-        textAlign: "center",
-        fontSize: "18px"
+        textAlign: "center"
       }}>
-        🚀 CityLive - GPS en tiempo real
+        🚀 CityLive - MULTI GPS
       </div>
 
       {/* CONTENIDO */}
       <div style={{
-  flex: 1,
-  display: "flex",
-  flexDirection: window.innerWidth < 768 ? "column" : "row"
-}}>
+        flex: 1,
+        display: "flex",
+        flexDirection: window.innerWidth < 768 ? "column" : "row"
+      }}>
 
+        {/* PANEL */}
         <div style={{
-  width: window.innerWidth < 768 ? "100%" : "300px",
-  background: "#f5f5f5",
-  padding: "10px"
-}}>
-          <strong>🌡️ {clima.temperatura}°C</strong> | 💧 {clima.humedad}%
-          <br />
+          width: window.innerWidth < 768 ? "100%" : "300px",
+          background: "#f5f5f5",
+          padding: "10px"
+        }}>
+          <strong>🌡️ {clima.temperatura}°C</strong><br />
           📍 {pos[0].toFixed(5)}, {pos[1].toFixed(5)}
+
+          <hr />
+          <strong>📊 Historial</strong>
+
+          {historial.slice(0, 10).map((item, i) => (
+            <div key={i}>
+              📍 {item.dispositivoId}
+              <br />
+              {item.lat.toFixed(5)}, {item.lng.toFixed(5)}
+            </div>
+          ))}
         </div>
 
         {/* MAPA */}
-        <div style={{
-  flex: 1,
-  height: window.innerWidth < 768 ? "60vh" : "100%"
-}}>
-          <MapContainer
-            center={pos}
-            zoom={15}
-            style={{ height: "100%", width: "100%" }}
-          >
+        <div style={{ flex: 1 }}>
+          <MapContainer center={pos} zoom={15} style={{ height: "100%", width: "100%" }}>
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
             <MapUpdater center={pos} />
 
+            {/* TU UBICACIÓN */}
             <Marker position={pos}>
-              <Popup>📍 Tu ubicación</Popup>
+              <Popup>📍 Tú (celular)</Popup>
             </Marker>
 
-            <div style={{
-  background: "#fff",
-  padding: "10px",
-  fontSize: "12px",
-  maxHeight: "150px",
-  overflowY: "auto"
-}}>
-  <strong>📊 Historial</strong>
+            {/* TODOS LOS DISPOSITIVOS */}
+            {historial.map((p, i) => (
+              <Marker key={i} position={[p.lat, p.lng]}>
+                <Popup>
+                  📍 {p.dispositivoId || "Dispositivo"}
+                  <br />
+                  {p.lat.toFixed(5)}, {p.lng.toFixed(5)}
+                </Popup>
+              </Marker>
+            ))}
 
-  {historial.length > 0 ? (
-    historial.slice().reverse().map((item, i) => (
-      <div key={i}>
-        📍 {item.lat.toFixed(5)}, {item.lng.toFixed(5)}
-        <br />
-        {item.fecha && (
-          <span style={{ color: "#666" }}>
-            {new Date(item.fecha).toLocaleString()}
-          </span>
-        )}
-        <hr />
-      </div>
-    ))
-  ) : (
-    <p>No hay datos</p>
-  )}
-</div>
           </MapContainer>
         </div>
 
