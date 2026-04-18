@@ -4,7 +4,9 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-// FIX ICONOS
+// ===============================
+// 🔧 FIX ICONOS
+// ===============================
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
@@ -12,14 +14,18 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
 });
 
-// TIPOS
+// ===============================
+// 🧩 TIPOS
+// ===============================
 interface Ubicacion {
   lat: number;
   lng: number;
   dispositivoId?: string;
 }
 
-// MAPA AUTO CENTER
+// ===============================
+// 🗺️ AUTO CENTER
+// ===============================
 function MapUpdater({ center }: { center: [number, number] }) {
   const map = useMap();
   useEffect(() => {
@@ -28,6 +34,9 @@ function MapUpdater({ center }: { center: [number, number] }) {
   return null;
 }
 
+// ===============================
+// 🚀 APP
+// ===============================
 function App() {
   const [pos, setPos] = useState<[number, number]>([3.45, -76.53]);
   const [historial, setHistorial] = useState<Ubicacion[]>([]);
@@ -35,7 +44,7 @@ function App() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   // ===============================
-  // 🔥 ID ÚNICO POR DISPOSITIVO
+  // 🔥 ID ÚNICO
   // ===============================
   useEffect(() => {
     let id = localStorage.getItem("device_id");
@@ -49,7 +58,7 @@ function App() {
   }, []);
 
   // ===============================
-  // 📱 RESPONSIVE REAL
+  // 📱 RESPONSIVE
   // ===============================
   useEffect(() => {
     const resize = () => setIsMobile(window.innerWidth < 768);
@@ -58,22 +67,29 @@ function App() {
   }, []);
 
   // ===============================
-  // 📡 GPS
+  // 📡 GPS CELULAR
   // ===============================
   useEffect(() => {
-    const watch = navigator.geolocation.watchPosition(async (p) => {
-      const lat = p.coords.latitude;
-      const lng = p.coords.longitude;
+    if (!navigator.geolocation) return;
 
-      setPos([lat, lng]);
+    const watch = navigator.geolocation.watchPosition(
+      async (p) => {
+        const lat = p.coords.latitude;
+        const lng = p.coords.longitude;
 
-      await axios.post("https://citylive.onrender.com/ubicacion", {
-        dispositivoId: deviceId,
-        lat,
-        lng
-      });
+        setPos([lat, lng]);
 
-    });
+        if (deviceId) {
+          await axios.post("https://citylive.onrender.com/ubicacion", {
+            dispositivoId: deviceId,
+            lat,
+            lng
+          });
+        }
+      },
+      (err) => console.log("GPS error", err),
+      { enableHighAccuracy: true }
+    );
 
     return () => navigator.geolocation.clearWatch(watch);
   }, [deviceId]);
@@ -83,22 +99,35 @@ function App() {
   // ===============================
   useEffect(() => {
     const load = async () => {
-      const res = await axios.get("https://citylive.onrender.com/ubicaciones");
-      setHistorial(res.data);
+      try {
+        const res = await axios.get("https://citylive.onrender.com/ubicaciones");
+
+        // 🔥 FILTRAR ESP32
+        const filtrado = res.data.filter(
+          (d: Ubicacion) => d.dispositivoId !== "esp32_1"
+        );
+
+        setHistorial(filtrado);
+      } catch (err) {
+        console.log("Error cargando", err);
+      }
     };
 
     load();
-    const i = setInterval(load, 5000);
+
+    const i = setInterval(load, 10000); // 🔥 cada 10 segundos
     return () => clearInterval(i);
   }, []);
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
 
+      {/* HEADER */}
       <div style={{ background: "#000", color: "#fff", padding: 10 }}>
         🚀 CityLive PRO
       </div>
 
+      {/* CONTENIDO */}
       <div style={{
         flex: 1,
         display: "flex",
@@ -109,10 +138,25 @@ function App() {
         <div style={{
           width: isMobile ? "100%" : "280px",
           background: "#f0f0f0",
-          padding: 10
+          padding: 10,
+          overflowY: "auto"
         }}>
           <strong>📍 TU ID:</strong>
           <br /> {deviceId}
+
+          <hr />
+
+          <strong>📊 Historial</strong>
+
+          {historial.length === 0 && <p>No hay datos</p>}
+
+          {historial.map((item, i) => (
+            <div key={i} style={{ marginBottom: 8 }}>
+              📍 {item.dispositivoId}
+              <br />
+              {item.lat.toFixed(5)}, {item.lng.toFixed(5)}
+            </div>
+          ))}
         </div>
 
         {/* MAPA */}
@@ -126,7 +170,7 @@ function App() {
 
             {/* TU UBICACIÓN */}
             <Marker position={pos}>
-              <Popup>📱 Tú</Popup>
+              <Popup>📱 Tú ({deviceId})</Popup>
             </Marker>
 
             {/* OTROS DISPOSITIVOS */}
@@ -135,6 +179,7 @@ function App() {
                 <Popup>{d.dispositivoId}</Popup>
               </Marker>
             ))}
+
           </MapContainer>
         </div>
 
