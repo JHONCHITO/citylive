@@ -15,16 +15,12 @@ L.Icon.Default.mergeOptions({
 });
 
 // ===============================
-// 🧩 TIPOS
-// ===============================
 interface Ubicacion {
   lat: number;
   lng: number;
   dispositivoId?: string;
 }
 
-// ===============================
-// 🗺️ AUTO CENTER
 // ===============================
 function MapUpdater({ center }: { center: [number, number] }) {
   const map = useMap();
@@ -35,13 +31,17 @@ function MapUpdater({ center }: { center: [number, number] }) {
 }
 
 // ===============================
-// 🚀 APP
-// ===============================
 function App() {
   const [pos, setPos] = useState<[number, number]>([3.45, -76.53]);
   const [historial, setHistorial] = useState<Ubicacion[]>([]);
+  const [activos, setActivos] = useState<Ubicacion[]>([]);
   const [deviceId, setDeviceId] = useState("");
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  const [clima, setClima] = useState({
+    temperatura: 0,
+    humedad: 0,
+    descripcion: ""
+  });
 
   // ===============================
   // 🔥 ID ÚNICO
@@ -58,16 +58,21 @@ function App() {
   }, []);
 
   // ===============================
-  // 📱 RESPONSIVE
+  // 🌦️ CLIMA
   // ===============================
-  useEffect(() => {
-    const resize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
-  }, []);
+  const obtenerClima = async (lat: number, lng: number) => {
+    try {
+      const res = await axios.get(
+        `https://citylive.onrender.com/api/clima?lat=${lat}&lng=${lng}`
+      );
+      setClima(res.data);
+    } catch {
+      console.log("Error clima");
+    }
+  };
 
   // ===============================
-  // 📡 GPS CELULAR
+  // 📡 GPS
   // ===============================
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -78,6 +83,7 @@ function App() {
         const lng = p.coords.longitude;
 
         setPos([lat, lng]);
+        obtenerClima(lat, lng);
 
         if (deviceId) {
           await axios.post("https://citylive.onrender.com/ubicacion", {
@@ -87,7 +93,7 @@ function App() {
           });
         }
       },
-      (err) => console.log("GPS error", err),
+      (err) => console.log(err),
       { enableHighAccuracy: true }
     );
 
@@ -95,91 +101,103 @@ function App() {
   }, [deviceId]);
 
   // ===============================
-  // 🔄 CARGAR DISPOSITIVOS
+  // 📊 HISTORIAL REAL
   // ===============================
   useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await axios.get("https://citylive.onrender.com/ubicaciones");
+    if (!deviceId) return;
 
-        // 🔥 FILTRAR ESP32
+    const loadHistorial = async () => {
+      try {
+        const res = await axios.get(
+          `https://citylive.onrender.com/historial/${deviceId}`
+        );
+        setHistorial(res.data);
+      } catch {
+        console.log("Error historial");
+      }
+    };
+
+    loadHistorial();
+
+    const i = setInterval(loadHistorial, 10000);
+    return () => clearInterval(i);
+  }, [deviceId]);
+
+  // ===============================
+  // 🔥 ACTIVOS
+  // ===============================
+  useEffect(() => {
+    const loadActivos = async () => {
+      try {
+        const res = await axios.get(
+          "https://citylive.onrender.com/ubicaciones"
+        );
+
         const filtrado = res.data.filter(
           (d: Ubicacion) => d.dispositivoId !== "esp32_1"
         );
 
-        setHistorial(filtrado);
-      } catch (err) {
-        console.log("Error cargando", err);
+        setActivos(filtrado);
+      } catch {
+        console.log("Error activos");
       }
     };
 
-    load();
-
-    const i = setInterval(load, 10000); // 🔥 cada 10 segundos
+    loadActivos();
+    const i = setInterval(loadActivos, 10000);
     return () => clearInterval(i);
   }, []);
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
 
-      {/* HEADER */}
       <div style={{ background: "#000", color: "#fff", padding: 10 }}>
         🚀 CityLive PRO
       </div>
 
-      {/* CONTENIDO */}
-      <div style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: isMobile ? "column" : "row"
-      }}>
+      <div style={{ flex: 1, display: "flex" }}>
 
         {/* PANEL */}
-        <div style={{
-          width: isMobile ? "100%" : "280px",
-          background: "#f0f0f0",
-          padding: 10,
-          overflowY: "auto"
-        }}>
+        <div style={{ width: "280px", background: "#f0f0f0", padding: 10 }}>
           <strong>📍 TU ID:</strong>
           <br /> {deviceId}
 
           <hr />
 
-          <strong>📊 Historial</strong>
+          <strong>🌦️ Clima</strong>
+          <br />
+          🌡️ {clima.temperatura}°C
+          <br />
+          💧 {clima.humedad}%
+          <br />
+          ☁️ {clima.descripcion}
 
-          {historial.length === 0 && <p>No hay datos</p>}
+          <hr />
 
-          {historial.map((item, i) => (
-            <div key={i} style={{ marginBottom: 8 }}>
-              📍 {item.dispositivoId}
-              <br />
-              {item.lat.toFixed(5)}, {item.lng.toFixed(5)}
+          <strong>📊 Historial REAL</strong>
+
+          {historial.map((h, i) => (
+            <div key={i}>
+              {h.lat.toFixed(5)}, {h.lng.toFixed(5)}
             </div>
           ))}
         </div>
 
         {/* MAPA */}
-        <div style={{
-          flex: 1,
-          height: isMobile ? "60vh" : "100%"
-        }}>
+        <div style={{ flex: 1 }}>
           <MapContainer center={pos} zoom={15} style={{ height: "100%" }}>
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
             <MapUpdater center={pos} />
 
-            {/* TU UBICACIÓN */}
             <Marker position={pos}>
-              <Popup>📱 Tú ({deviceId})</Popup>
+              <Popup>Tú</Popup>
             </Marker>
 
-            {/* OTROS DISPOSITIVOS */}
-            {historial.map((d, i) => (
+            {activos.map((d, i) => (
               <Marker key={i} position={[d.lat, d.lng]}>
                 <Popup>{d.dispositivoId}</Popup>
               </Marker>
             ))}
-
           </MapContainer>
         </div>
 
