@@ -1,5 +1,5 @@
 // ===============================
-// 🚀 CITYLIVE BACKEND PRO FINAL
+// 🚀 CITYLIVE BACKEND PRO FINAL +
 // ===============================
 
 require("dotenv").config();
@@ -25,7 +25,7 @@ mongoose.connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/citylive")
   .catch(err => console.log("❌ Error Mongo:", err));
 
 // ===============================
-// 📦 MODELOS
+// 📦 MODELO
 // ===============================
 const Ubicacion = mongoose.model("Ubicacion", new mongoose.Schema({
   dispositivoId: String,
@@ -58,34 +58,73 @@ app.get("/api/clima", async (req, res) => {
 // 📍 GUARDAR UBICACIÓN
 // ===============================
 app.post("/ubicacion", async (req, res) => {
-  const { dispositivoId, lat, lng } = req.body;
+  try {
+    const { dispositivoId, lat, lng } = req.body;
 
-  if (!dispositivoId || !lat || !lng) {
-    return res.status(400).json({ error: "Datos incompletos" });
+    if (!dispositivoId || !lat || !lng) {
+      return res.status(400).json({ error: "Datos incompletos" });
+    }
+
+    await new Ubicacion({ dispositivoId, lat, lng }).save();
+
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Error guardando" });
   }
-
-  await new Ubicacion({ dispositivoId, lat, lng }).save();
-  res.json({ ok: true });
 });
 
 // ===============================
-// 🔥 🔥 MULTI DISPOSITIVOS PRO 🔥
+// 🔥 🔥 SOLO DISPOSITIVOS ACTIVOS 🔥
 // ===============================
 app.get("/ubicaciones", async (req, res) => {
-  const data = await Ubicacion.aggregate([
-    { $sort: { fecha: -1 } },
-    {
-      $group: {
-        _id: "$dispositivoId",
-        lat: { $first: "$lat" },
-        lng: { $first: "$lng" },
-        fecha: { $first: "$fecha" },
-        dispositivoId: { $first: "$dispositivoId" }
-      }
-    }
-  ]);
+  try {
+    const hace10s = new Date(Date.now() - 15000); // ⏱ últimos 15 segundos
 
-  res.json(data);
+    const data = await Ubicacion.aggregate([
+      {
+        $match: {
+          fecha: { $gte: hace10s }
+        }
+      },
+      {
+        $sort: { fecha: -1 }
+      },
+      {
+        $group: {
+          _id: "$dispositivoId",
+          lat: { $first: "$lat" },
+          lng: { $first: "$lng" },
+          fecha: { $first: "$fecha" },
+          dispositivoId: { $first: "$dispositivoId" }
+        }
+      }
+    ]);
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: "Error obteniendo datos" });
+  }
+});
+
+// ===============================
+// 🧹 LIMPIAR BASE (DEBUG)
+// ===============================
+app.get("/limpiar", async (req, res) => {
+  await Ubicacion.deleteMany({});
+  res.send("🧹 Base de datos limpia");
+});
+
+// ===============================
+// 🧠 INFO ACTIVOS
+// ===============================
+app.get("/activos", async (req, res) => {
+  const hace10s = new Date(Date.now() - 15000);
+
+  const count = await Ubicacion.countDocuments({
+    fecha: { $gte: hace10s }
+  });
+
+  res.json({ dispositivosActivos: count });
 });
 
 // ===============================
