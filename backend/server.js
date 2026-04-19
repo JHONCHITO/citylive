@@ -12,8 +12,8 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🔑 API KEY
-const API_KEY = process.env.WEATHER_API_KEY || "TU_API_KEY";
+// 🔑 API KEY (OBLIGATORIO)
+const API_KEY = process.env.WEATHER_API_KEY;
 
 // ===============================
 // 🔐 MIDDLEWARES
@@ -22,17 +22,24 @@ app.use(cors());
 app.use(express.json());
 
 // ===============================
-// 🔥 CONEXIÓN SEGURA A MONGO
+// 🔥 VALIDAR API KEY
+// ===============================
+if (!API_KEY) {
+  console.log("❌ ERROR: WEATHER_API_KEY NO DEFINIDA");
+  console.log("👉 agrega tu API key en el .env");
+}
+
+// ===============================
+// 🔥 MONGODB
 // ===============================
 const MONGO_URI =
   process.env.MONGO_URI ||
-  "mongodb://127.0.0.1:27017/citylive"; // fallback local
+  "mongodb://127.0.0.1:27017/citylive";
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB conectado"))
   .catch(err => {
     console.log("❌ Error Mongo:", err.message);
-    console.log("⚠️ Usando modo sin base de datos (solo pruebas)");
   });
 
 // ===============================
@@ -53,7 +60,7 @@ app.get("/", (req, res) => {
 });
 
 // ===============================
-// 🌦️ CLIMA
+// 🌦️ CLIMA (ARREGLADO)
 // ===============================
 app.get("/api/clima", async (req, res) => {
   try {
@@ -62,13 +69,21 @@ app.get("/api/clima", async (req, res) => {
     lat = parseFloat(lat);
     lng = parseFloat(lng);
 
+    console.log("📍 REQUEST CLIMA:", lat, lng);
+
     if (isNaN(lat) || isNaN(lng)) {
       return res.status(400).json({ error: "Coordenadas inválidas" });
     }
 
-    const r = await axios.get(
-      `http://api.weatherapi.com/v1/current.json?key=${API_KEY}&q=${lat},${lng}&aqi=no`
-    );
+    if (!API_KEY) {
+      return res.status(500).json({ error: "API KEY no configurada" });
+    }
+
+    const url = `http://api.weatherapi.com/v1/current.json?key=${API_KEY}&q=${lat},${lng}&aqi=no`;
+
+    const r = await axios.get(url);
+
+    console.log("🌦️ RESPUESTA:", r.data.current);
 
     res.json({
       temperatura: r.data.current.temp_c,
@@ -78,8 +93,12 @@ app.get("/api/clima", async (req, res) => {
     });
 
   } catch (err) {
-    console.log("❌ ERROR CLIMA:", err.message);
-    res.status(500).json({ error: "Error clima" });
+    console.log("❌ ERROR CLIMA:", err.response?.data || err.message);
+
+    res.status(500).json({
+      error: "Error clima",
+      detalle: err.response?.data || err.message
+    });
   }
 });
 
@@ -94,16 +113,12 @@ app.post("/ubicacion", async (req, res) => {
       return res.status(400).json({ error: "Datos incompletos" });
     }
 
-    // 🔥 si Mongo falla, igual responde OK
-    try {
-      await new Ubicacion({ dispositivoId, lat, lng }).save();
-    } catch {
-      console.log("⚠️ No se guardó en DB (modo offline)");
-    }
+    await new Ubicacion({ dispositivoId, lat, lng }).save();
 
     res.json({ ok: true });
 
   } catch (err) {
+    console.log("❌ ERROR GUARDAR:", err.message);
     res.status(500).json({ error: "Error guardando" });
   }
 });
@@ -130,8 +145,9 @@ app.get("/ubicaciones", async (req, res) => {
 
     res.json(data);
 
-  } catch {
-    res.json([]); // 👈 evita que el frontend falle
+  } catch (err) {
+    console.log("❌ ERROR ACTIVOS:", err.message);
+    res.json([]);
   }
 });
 
@@ -148,7 +164,8 @@ app.get("/historial/:id", async (req, res) => {
 
     res.json(data);
 
-  } catch {
+  } catch (err) {
+    console.log("❌ ERROR HISTORIAL:", err.message);
     res.json([]);
   }
 });
