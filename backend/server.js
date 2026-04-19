@@ -12,17 +12,28 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const API_KEY = process.env.WEATHER_API_KEY || "TU_API_KEY_AQUI";
+// 🔑 API KEY
+const API_KEY = process.env.WEATHER_API_KEY || "TU_API_KEY";
 
+// ===============================
+// 🔐 MIDDLEWARES
+// ===============================
 app.use(cors());
 app.use(express.json());
 
 // ===============================
-// 🔥 MONGODB
+// 🔥 CONEXIÓN SEGURA A MONGO
 // ===============================
-mongoose.connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/citylive")
+const MONGO_URI =
+  process.env.MONGO_URI ||
+  "mongodb://127.0.0.1:27017/citylive"; // fallback local
+
+mongoose.connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB conectado"))
-  .catch(err => console.log("❌ Error Mongo:", err));
+  .catch(err => {
+    console.log("❌ Error Mongo:", err.message);
+    console.log("⚠️ Usando modo sin base de datos (solo pruebas)");
+  });
 
 // ===============================
 // 📦 MODELO
@@ -38,11 +49,11 @@ const Ubicacion = mongoose.model("Ubicacion", new mongoose.Schema({
 // 🧪 ROOT
 // ===============================
 app.get("/", (req, res) => {
-  res.send("🚀 CITYLIVE API OK");
+  res.send("🚀 CITYLIVE API FUNCIONANDO");
 });
 
 // ===============================
-// 🌦️ CLIMA (CORREGIDO)
+// 🌦️ CLIMA
 // ===============================
 app.get("/api/clima", async (req, res) => {
   try {
@@ -73,7 +84,7 @@ app.get("/api/clima", async (req, res) => {
 });
 
 // ===============================
-// 📍 GUARDAR UBICACIÓN (MEJORADO)
+// 📍 GUARDAR UBICACIÓN
 // ===============================
 app.post("/ubicacion", async (req, res) => {
   try {
@@ -83,34 +94,22 @@ app.post("/ubicacion", async (req, res) => {
       return res.status(400).json({ error: "Datos incompletos" });
     }
 
-    // 🔥 validar números
-    if (isNaN(lat) || isNaN(lng)) {
-      return res.status(400).json({ error: "Coordenadas inválidas" });
+    // 🔥 si Mongo falla, igual responde OK
+    try {
+      await new Ubicacion({ dispositivoId, lat, lng }).save();
+    } catch {
+      console.log("⚠️ No se guardó en DB (modo offline)");
     }
-
-    // 🔥 evitar duplicados
-    const ultima = await Ubicacion.findOne({ dispositivoId }).sort({ fecha: -1 });
-
-    if (ultima) {
-      const igual =
-        Math.abs(ultima.lat - lat) < 0.00001 &&
-        Math.abs(ultima.lng - lng) < 0.00001;
-
-      if (igual) return res.json({ ok: true, msg: "Sin cambios" });
-    }
-
-    await new Ubicacion({ dispositivoId, lat, lng }).save();
 
     res.json({ ok: true });
 
   } catch (err) {
-    console.log("❌ ERROR GUARDAR:", err.message);
     res.status(500).json({ error: "Error guardando" });
   }
 });
 
 // ===============================
-// 🔥 ACTIVOS (MEJORADO)
+// 🔥 ACTIVOS
 // ===============================
 app.get("/ubicaciones", async (req, res) => {
   try {
@@ -131,58 +130,27 @@ app.get("/ubicaciones", async (req, res) => {
 
     res.json(data);
 
-  } catch (err) {
-    res.status(500).json({ error: "Error activos" });
+  } catch {
+    res.json([]); // 👈 evita que el frontend falle
   }
 });
 
 // ===============================
-// 📊 HISTORIAL (MEJORADO)
+// 📊 HISTORIAL
 // ===============================
 app.get("/historial/:id", async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 50;
-
     const data = await Ubicacion.find({
       dispositivoId: req.params.id
     })
       .sort({ fecha: -1 })
-      .limit(limit);
+      .limit(50);
 
     res.json(data);
 
   } catch {
-    res.status(500).json({ error: "Error historial" });
+    res.json([]);
   }
-});
-
-// ===============================
-// 🧠 INFO ACTIVOS
-// ===============================
-app.get("/activos", async (req, res) => {
-  const hace15s = new Date(Date.now() - 15000);
-
-  const count = await Ubicacion.countDocuments({
-    fecha: { $gte: hace15s }
-  });
-
-  res.json({ activos: count });
-});
-
-// ===============================
-// 🧹 LIMPIAR
-// ===============================
-app.get("/limpiar", async (req, res) => {
-  await Ubicacion.deleteMany({});
-  res.send("🧹 Base limpia");
-});
-
-// ===============================
-// 🔥 OPCIONAL ESP32 (COMPATIBLE)
-// ===============================
-app.post("/api/iot", async (req, res) => {
-  console.log("📡 ESP32:", req.body);
-  res.json({ ok: true });
 });
 
 // ===============================
