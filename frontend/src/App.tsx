@@ -1,184 +1,328 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-// ===============================
-// 🔧 FIX ICONOS
-// ===============================
-delete (L.Icon.Default.prototype as any)._getIconUrl;
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://citylive.onrender.com";
+const POLL_INTERVAL_MS = 15000;
+const DEFAULT_CENTER: [number, number] = [3.451, -76.5322];
+
+delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
   iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png",
   shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
 });
 
-// ===============================
-// 🧩 TIPOS
-// ===============================
-interface Ubicacion {
+interface UbicacionActiva {
+  dispositivoId: string;
   lat: number;
   lng: number;
-  dispositivoId: string;
+  temperatura: number;
+  humedad: number;
+  descripcion: string;
+  timestamp: string;
 }
 
-// ===============================
-// 🗺️ CENTRAR MAPA
-// ===============================
-function MapUpdater({ center }: { center: [number, number] }) {
+function MapViewport({ dispositivos }: { dispositivos: UbicacionActiva[] }) {
   const map = useMap();
+
   useEffect(() => {
-    map.setView(center, map.getZoom());
-  }, [center]);
+    if (dispositivos.length === 0) {
+      map.setView(DEFAULT_CENTER, 13);
+      return;
+    }
+
+    if (dispositivos.length === 1) {
+      map.setView([dispositivos[0].lat, dispositivos[0].lng], 14);
+      return;
+    }
+
+    const bounds = L.latLngBounds(
+      dispositivos.map((item) => [item.lat, item.lng] as [number, number])
+    );
+
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+  }, [dispositivos, map]);
+
   return null;
 }
 
-// ===============================
-// 🚀 APP
-// ===============================
+function formatTimestamp(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Sin fecha";
+  }
+
+  return date.toLocaleString("es-CO", {
+    dateStyle: "short",
+    timeStyle: "medium",
+  });
+}
+
 function App() {
-  const [pos, setPos] = useState<[number, number]>([3.45, -76.53]);
-  const [dispositivos, setDispositivos] = useState<Ubicacion[]>([]);
-  const [deviceId, setDeviceId] = useState("");
-  const [clima, setClima] = useState<any>({});
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [dispositivos, setDispositivos] = useState<UbicacionActiva[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [lastSync, setLastSync] = useState("");
+  const [isCompact, setIsCompact] = useState(() => window.innerWidth < 980);
 
-  // ===============================
-  // 🔥 ID ÚNICO
-  // ===============================
   useEffect(() => {
-    let id = localStorage.getItem("device_id");
+    let isMounted = true;
 
-    if (!id) {
-      id = "device_" + Math.floor(Math.random() * 100000);
-      localStorage.setItem("device_id", id);
-    }
+    const loadDispositivos = async () => {
+      try {
+        const response = await axios.get<UbicacionActiva[]>(`${API_BASE_URL}/ubicaciones`, {
+          timeout: 8000,
+        });
 
-    setDeviceId(id);
-  }, []);
+        if (!isMounted) {
+          return;
+        }
 
-  // ===============================
-  // 📱 RESPONSIVE
-  // ===============================
-  useEffect(() => {
-    const resize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
-  }, []);
+        setDispositivos(response.data);
+        setError("");
+        setLastSync(new Date().toLocaleTimeString("es-CO"));
+      } catch (err) {
+        if (!isMounted) {
+          return;
+        }
 
-  // ===============================
-  // 📡 GPS + ENVÍO
-  // ===============================
-  useEffect(() => {
-    const watch = navigator.geolocation.watchPosition(async (p) => {
-      const lat = p.coords.latitude;
-      const lng = p.coords.longitude;
+        const message = axios.isAxiosError(err)
+          ? err.response?.data?.error || err.message
+          : "No fue posible cargar las ubicaciones";
 
-      setPos([lat, lng]);
-
-      // 🔥 enviar ubicación
-      await axios.post("https://citylive.onrender.com/ubicacion", {
-        dispositivoId: deviceId,
-        lat,
-        lng
-      });
-
-      // 🔥 pedir clima de TU ubicación
-      const res = await axios.get(
-        `https://citylive.onrender.com/api/clima?lat=${lat}&lng=${lng}`
-      );
-
-      setClima(res.data);
-
-    });
-
-    return () => navigator.geolocation.clearWatch(watch);
-  }, [deviceId]);
-
-  // ===============================
-  // 🔄 CARGAR DISPOSITIVOS
-  // ===============================
-  useEffect(() => {
-    const load = async () => {
-      const res = await axios.get("https://citylive.onrender.com/ubicaciones");
-
-      setDispositivos(res.data);
+        setError(message);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
     };
 
-    load();
-    const i = setInterval(load, 5000);
-    return () => clearInterval(i);
+    loadDispositivos();
+    const intervalId = window.setInterval(loadDispositivos, POLL_INTERVAL_MS);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
   }, []);
 
+  useEffect(() => {
+    const onResize = () => setIsCompact(window.innerWidth < 980);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const ubicacionesUnicas = useMemo(() => {
+    const unique = new Map<string, UbicacionActiva>();
+
+    for (const item of dispositivos) {
+      if (!unique.has(item.dispositivoId)) {
+        unique.set(item.dispositivoId, item);
+      }
+    }
+
+    return Array.from(unique.values());
+  }, [dispositivos]);
+
+  const hottest = useMemo(() => {
+    if (ubicacionesUnicas.length === 0) {
+      return null;
+    }
+
+    return [...ubicacionesUnicas].sort((a, b) => b.temperatura - a.temperatura)[0];
+  }, [ubicacionesUnicas]);
+
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
-
-      {/* HEADER */}
-      <div style={{
-        background: "#000",
-        color: "#fff",
-        padding: 10,
-        textAlign: "center"
-      }}>
-        🚀 CityLive PRO
-      </div>
-
-      {/* CONTENIDO */}
-      <div style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: isMobile ? "column" : "row"
-      }}>
-
-        {/* PANEL IZQUIERDO */}
-        <div style={{
-          width: isMobile ? "100%" : "280px",
-          background: "#f0f0f0",
-          padding: 10
-        }}>
-
-          <strong>📍 TU ID:</strong>
-          <br /> {deviceId}
-
-          <hr />
-
-          <strong>🌦️ Clima actual</strong>
-          <br />
-          🌡️ {clima?.temperatura ?? "--"}°C
-          <br />
-          💧 {clima?.humedad ?? "--"}%
-          <br />
-          ☁️ {clima?.descripcion ?? "--"}
-
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "grid",
+        gridTemplateRows: "auto 1fr",
+        background:
+          "radial-gradient(circle at top left, rgba(19, 117, 162, 0.2), transparent 35%), linear-gradient(180deg, #eef6fb 0%, #dbe7ef 100%)",
+      }}
+    >
+      <header
+        style={{
+          padding: "18px 24px",
+          borderBottom: "1px solid rgba(16, 42, 67, 0.12)",
+          background: "rgba(255, 255, 255, 0.86)",
+          backdropFilter: "blur(14px)",
+        }}
+      >
+        <div
+          style={{
+            maxWidth: "1400px",
+            margin: "0 auto",
+            display: "flex",
+            justifyContent: "space-between",
+            gap: "12px",
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: "12px", letterSpacing: "0.14em", color: "#486581" }}>
+              CITYLIVE
+            </div>
+            <h1 style={{ margin: 0, fontSize: "28px", color: "#102a43" }}>Monitoreo IoT en tiempo real</h1>
+          </div>
+          <div style={{ color: "#486581", fontSize: "14px" }}>
+            Última sincronización: <strong>{lastSync || "pendiente"}</strong>
+          </div>
         </div>
+      </header>
 
-        {/* MAPA */}
-        <div style={{
-          flex: 1,
-          height: isMobile ? "60vh" : "100%"
-        }}>
-          <MapContainer center={pos} zoom={15} style={{ height: "100%" }}>
-            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      <main
+        style={{
+          maxWidth: "1400px",
+          width: "100%",
+          margin: "0 auto",
+          padding: "20px 24px 24px",
+          display: "grid",
+          gap: "20px",
+          gridTemplateColumns: isCompact ? "1fr" : "minmax(280px, 360px) minmax(0, 1fr)",
+        }}
+      >
+        <section
+          style={{
+            display: "grid",
+            gap: "16px",
+            alignContent: "start",
+          }}
+        >
+          <div
+            style={{
+              padding: "18px",
+              borderRadius: "20px",
+              background: "rgba(255, 255, 255, 0.92)",
+              boxShadow: "0 18px 40px rgba(16, 42, 67, 0.08)",
+            }}
+          >
+            <div style={{ color: "#486581", fontSize: "14px", marginBottom: "8px" }}>Dispositivos activos</div>
+            <div style={{ fontSize: "40px", fontWeight: 700, color: "#102a43" }}>{ubicacionesUnicas.length}</div>
+            <div style={{ color: "#486581", fontSize: "14px" }}>Ventana activa: últimos 10 minutos</div>
+          </div>
 
-            <MapUpdater center={pos} />
+          <div
+            style={{
+              padding: "18px",
+              borderRadius: "20px",
+              background: "rgba(255, 255, 255, 0.92)",
+              boxShadow: "0 18px 40px rgba(16, 42, 67, 0.08)",
+            }}
+          >
+            <div style={{ color: "#486581", fontSize: "14px", marginBottom: "8px" }}>Temperatura más alta</div>
+            <div style={{ fontSize: "28px", fontWeight: 700, color: "#d64545" }}>
+              {hottest ? `${hottest.temperatura.toFixed(1)} °C` : "--"}
+            </div>
+            <div style={{ color: "#486581", fontSize: "14px" }}>
+              {hottest ? hottest.dispositivoId : "Sin datos"}
+            </div>
+          </div>
 
-            {/* 🔵 TU UBICACIÓN */}
-            <Marker position={pos}>
-              <Popup>📱 Tú</Popup>
-            </Marker>
+          <div
+            style={{
+              padding: "18px",
+              borderRadius: "20px",
+              background: "rgba(255, 255, 255, 0.92)",
+              boxShadow: "0 18px 40px rgba(16, 42, 67, 0.08)",
+              display: "grid",
+              gap: "12px",
+            }}
+          >
+            <div style={{ fontSize: "18px", fontWeight: 700, color: "#102a43" }}>Estado del sistema</div>
+            <div style={{ color: error ? "#b42318" : "#0f766e", fontSize: "14px" }}>
+              {error ? `Error de red: ${error}` : loading ? "Cargando datos..." : "Conectado al backend"}
+            </div>
+            {ubicacionesUnicas.length === 0 && !loading ? (
+              <div style={{ color: "#486581", fontSize: "14px" }}>
+                No hay dispositivos reportando en este momento.
+              </div>
+            ) : null}
+          </div>
 
-            {/* 🔴 OTROS DISPOSITIVOS (INCLUYE ESP32) */}
-            {dispositivos.map((d, i) => (
-              <Marker key={i} position={[d.lat, d.lng]}>
-                <Popup>{d.dispositivoId}</Popup>
+          <div
+            style={{
+              padding: "18px",
+              borderRadius: "20px",
+              background: "rgba(255, 255, 255, 0.92)",
+              boxShadow: "0 18px 40px rgba(16, 42, 67, 0.08)",
+              display: "grid",
+              gap: "12px",
+              maxHeight: isCompact ? "unset" : "calc(100vh - 360px)",
+              overflow: "auto",
+            }}
+          >
+            <div style={{ fontSize: "18px", fontWeight: 700, color: "#102a43" }}>Resumen por dispositivo</div>
+            {ubicacionesUnicas.map((item) => (
+              <article
+                key={item.dispositivoId}
+                style={{
+                  padding: "14px",
+                  borderRadius: "14px",
+                  background: "#f6fbff",
+                  border: "1px solid rgba(72, 101, 129, 0.18)",
+                }}
+              >
+                <div style={{ fontWeight: 700, color: "#102a43" }}>{item.dispositivoId}</div>
+                <div style={{ color: "#486581", fontSize: "14px" }}>
+                  {item.lat.toFixed(4)}, {item.lng.toFixed(4)}
+                </div>
+                <div style={{ marginTop: "6px", color: "#102a43" }}>
+                  {item.temperatura.toFixed(1)} °C · {item.descripcion}
+                </div>
+                <div style={{ color: "#486581", fontSize: "13px", marginTop: "4px" }}>
+                  Humedad {item.humedad}% · {formatTimestamp(item.timestamp)}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section
+          style={{
+            minHeight: isCompact ? "60vh" : "70vh",
+            borderRadius: "24px",
+            overflow: "hidden",
+            boxShadow: "0 24px 60px rgba(16, 42, 67, 0.12)",
+            border: "1px solid rgba(16, 42, 67, 0.08)",
+          }}
+        >
+          <MapContainer center={DEFAULT_CENTER} zoom={13} style={{ height: "100%", width: "100%" }}>
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            <MapViewport dispositivos={ubicacionesUnicas} />
+
+            {ubicacionesUnicas.map((item) => (
+              <Marker key={item.dispositivoId} position={[item.lat, item.lng]}>
+                <Popup>
+                  <div style={{ minWidth: "180px" }}>
+                    <strong>{item.dispositivoId}</strong>
+                    <br />
+                    🌡️ {item.temperatura.toFixed(1)} °C
+                    <br />
+                    📍 {item.lat.toFixed(5)}, {item.lng.toFixed(5)}
+                    <br />
+                    💧 {item.humedad}%
+                    <br />
+                    ☁️ {item.descripcion}
+                    <br />
+                    🕒 {formatTimestamp(item.timestamp)}
+                  </div>
+                </Popup>
               </Marker>
             ))}
-
           </MapContainer>
-        </div>
-
-      </div>
+        </section>
+      </main>
     </div>
   );
 }
