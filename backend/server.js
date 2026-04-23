@@ -196,6 +196,14 @@ const weatherClient = axios.create({
   },
 });
 
+const openMeteoClient = axios.create({
+  baseURL: "https://api.open-meteo.com/v1",
+  timeout: WEATHER_API_TIMEOUT_MS,
+  validateStatus(status) {
+    return status >= 200 && status < 500;
+  },
+});
+
 mongoose.connection.on("connected", () => {
   log("info", "MongoDB conectado");
 });
@@ -311,6 +319,73 @@ function isRetryableWeatherError(error, status) {
   return ["ECONNABORTED", "ENOTFOUND", "ETIMEDOUT", "ECONNRESET"].includes(error.code || "");
 }
 
+function mapOpenMeteoCodeToDescription(code) {
+  const descriptions = {
+    0: "Despejado",
+    1: "Mayormente despejado",
+    2: "Parcialmente nublado",
+    3: "Nublado",
+    45: "Niebla",
+    48: "Niebla con escarcha",
+    51: "Llovizna ligera",
+    53: "Llovizna moderada",
+    55: "Llovizna intensa",
+    61: "Lluvia ligera",
+    63: "Lluvia moderada",
+    65: "Lluvia intensa",
+    71: "Nieve ligera",
+    73: "Nieve moderada",
+    75: "Nieve intensa",
+    80: "Chubascos ligeros",
+    81: "Chubascos moderados",
+    82: "Chubascos intensos",
+    95: "Tormenta",
+    96: "Tormenta con granizo ligero",
+    99: "Tormenta con granizo fuerte",
+  };
+
+  return descriptions[code] || "Condicion no disponible";
+}
+
+async function obtenerClimaFallback(lat, lng, cause) {
+  const response = await openMeteoClient.get("/forecast", {
+    params: {
+      latitude: lat,
+      longitude: lng,
+      current: "temperature_2m,relative_humidity_2m,weather_code",
+      timezone: "auto",
+    },
+  });
+
+  if (response.status >= 400) {
+    const apiError = new Error(`Open-Meteo respondio con estado ${response.status}`);
+    apiError.status = response.status;
+    apiError.payload = response.data;
+    throw apiError;
+  }
+
+  const current = response.data?.current;
+  const temperatura = Number(current?.temperature_2m);
+  const humedad = Number(current?.relative_humidity_2m);
+  const weatherCode = Number(current?.weather_code);
+
+  if (!Number.isFinite(temperatura) || !Number.isFinite(humedad)) {
+    throw new Error("Respuesta invalida de Open-Meteo");
+  }
+
+  log("info", "Usando fallback de clima con Open-Meteo", {
+    lat,
+    lng,
+    cause,
+  });
+
+  return {
+    temperatura: Number(temperatura.toFixed(1)),
+    humedad: Math.max(0, Math.min(100, Math.round(humedad))),
+    descripcion: mapOpenMeteoCodeToDescription(weatherCode),
+  };
+}
+
 async function obtenerClima(lat, lng) {
   const maxAttempts = Math.max(1, WEATHER_API_RETRIES + 1);
   let lastError = null;
@@ -370,7 +445,7 @@ async function obtenerClima(lat, lng) {
     }
   }
 
-  throw lastError;
+  return obtenerClimaFallback(lat, lng, lastError?.message || "WeatherAPI no disponible");
 }
 
 function normalizeUbicacion(doc) {
