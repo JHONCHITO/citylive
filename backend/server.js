@@ -463,6 +463,247 @@ function normalizeUbicacion(doc) {
   };
 }
 
+function buildDashboardHtml() {
+  return `<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CityLive Dashboard</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", Tahoma, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: linear-gradient(180deg, #eef6fb 0%, #dbe7ef 100%);
+        color: #102a43;
+      }
+      .shell {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+      header {
+        padding: 18px 22px;
+        background: rgba(255,255,255,0.92);
+        border-bottom: 1px solid rgba(16,42,67,0.12);
+      }
+      header h1 {
+        margin: 4px 0 0;
+        font-size: 28px;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 340px 1fr;
+        gap: 18px;
+        padding: 18px;
+      }
+      .panel {
+        display: grid;
+        gap: 14px;
+        align-content: start;
+      }
+      .card {
+        background: rgba(255,255,255,0.94);
+        border-radius: 18px;
+        padding: 16px;
+        box-shadow: 0 18px 40px rgba(16,42,67,0.08);
+      }
+      .big {
+        font-size: 38px;
+        font-weight: 700;
+      }
+      #map {
+        min-height: 72vh;
+        border-radius: 22px;
+        overflow: hidden;
+        box-shadow: 0 24px 60px rgba(16,42,67,0.12);
+        border: 1px solid rgba(16,42,67,0.08);
+      }
+      .list {
+        display: grid;
+        gap: 10px;
+        max-height: calc(100vh - 320px);
+        overflow: auto;
+      }
+      .item {
+        padding: 12px;
+        border-radius: 14px;
+        background: #f6fbff;
+        border: 1px solid rgba(72,101,129,0.18);
+      }
+      .muted {
+        color: #486581;
+        font-size: 14px;
+      }
+      .warn {
+        color: #9a6700;
+      }
+      .error {
+        color: #b42318;
+      }
+      @media (max-width: 960px) {
+        .layout { grid-template-columns: 1fr; }
+        #map { min-height: 60vh; }
+        .list { max-height: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <div class="muted">CITYLIVE</div>
+        <h1>Mapa IoT en tiempo real</h1>
+        <div class="muted">Backend integrado en la misma URL</div>
+      </header>
+      <main class="layout">
+        <section class="panel">
+          <div class="card">
+            <div class="muted">Dispositivos visibles</div>
+            <div id="count" class="big">0</div>
+            <div class="muted">Refresco automático cada 15 segundos</div>
+          </div>
+          <div class="card">
+            <div class="muted">Estado</div>
+            <div id="status">Cargando datos...</div>
+            <div id="sync" class="muted">Sin sincronización</div>
+          </div>
+          <div class="card">
+            <div class="muted">Resumen</div>
+            <div id="list" class="list"></div>
+          </div>
+        </section>
+        <section id="map"></section>
+      </main>
+    </div>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script>
+      const defaultCenter = [3.451, -76.5322];
+      const map = L.map("map").setView(defaultCenter, 13);
+      const markers = new Map();
+      const countEl = document.getElementById("count");
+      const statusEl = document.getElementById("status");
+      const syncEl = document.getElementById("sync");
+      const listEl = document.getElementById("list");
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap",
+      }).addTo(map);
+
+      function formatNumber(value, digits) {
+        return Number.isFinite(value) ? value.toFixed(digits) : "--";
+      }
+
+      function formatTimestamp(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return "Sin fecha";
+        return date.toLocaleString("es-CO");
+      }
+
+      function clearMarkers() {
+        for (const marker of markers.values()) {
+          map.removeLayer(marker);
+        }
+        markers.clear();
+      }
+
+      function renderList(items) {
+        listEl.innerHTML = "";
+        if (items.length === 0) {
+          listEl.innerHTML = '<div class="muted">No hay datos para mostrar.</div>';
+          return;
+        }
+
+        for (const item of items) {
+          const div = document.createElement("div");
+          div.className = "item";
+          div.innerHTML =
+            "<strong>" + item.dispositivoId + "</strong><br>" +
+            '<span class="muted">' + formatNumber(item.lat, 4) + ", " + formatNumber(item.lng, 4) + "</span><br>" +
+            "Temperatura: " + formatNumber(item.temperatura, 1) + " °C<br>" +
+            "Clima: " + item.descripcion + "<br>" +
+            '<span class="muted">' + formatTimestamp(item.timestamp) + (item.stale ? " · último dato conocido" : "") + "</span>";
+          listEl.appendChild(div);
+        }
+      }
+
+      function renderMap(items) {
+        clearMarkers();
+
+        if (items.length === 0) {
+          map.setView(defaultCenter, 13);
+          return;
+        }
+
+        const bounds = [];
+
+        for (const item of items) {
+          const position = [item.lat, item.lng];
+          bounds.push(position);
+          const marker = L.marker(position).addTo(map);
+          marker.bindPopup(
+            "<strong>" + item.dispositivoId + "</strong><br>" +
+            "Temperatura: " + formatNumber(item.temperatura, 1) + " °C<br>" +
+            "Ubicación: " + formatNumber(item.lat, 5) + ", " + formatNumber(item.lng, 5) + "<br>" +
+            "Clima: " + item.descripcion + "<br>" +
+            "Actualizado: " + formatTimestamp(item.timestamp) +
+            (item.stale ? "<br>Estado: último dato conocido" : "")
+          );
+          markers.set(item.dispositivoId, marker);
+        }
+
+        if (bounds.length === 1) {
+          map.setView(bounds[0], 14);
+        } else {
+          map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
+        }
+      }
+
+      async function loadData() {
+        try {
+          const response = await fetch("/ubicaciones", { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+          }
+
+          const data = await response.json();
+          const items = Array.isArray(data) ? data : [];
+
+          countEl.textContent = String(items.length);
+          statusEl.textContent = items.length > 0 ? "Datos cargados correctamente" : "Sin dispositivos visibles";
+          statusEl.className = items.length > 0 ? "" : "warn";
+          syncEl.textContent = "Última sincronización: " + new Date().toLocaleTimeString("es-CO");
+
+          renderList(items);
+          renderMap(items);
+        } catch (error) {
+          statusEl.textContent = "Error cargando el mapa: " + error.message;
+          statusEl.className = "error";
+        }
+      }
+
+      loadData();
+      setInterval(loadData, 15000);
+    </script>
+  </body>
+</html>`;
+}
+
 async function getMongoHealth() {
   if (mongoose.connection.readyState !== 1 || !mongoose.connection.db) {
     return {
@@ -511,6 +752,10 @@ app.get("/health", async (_req, res) => {
       detail: error.message,
     });
   }
+});
+
+app.get("/dashboard", (_req, res) => {
+  res.type("html").send(buildDashboardHtml());
 });
 
 app.post("/ubicacion", requireDeviceKey, async (req, res) => {
