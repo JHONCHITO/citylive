@@ -4,8 +4,12 @@ import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://citylive.onrender.com";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "https://citylive.onrender.com").replace(
+  /\/+$/,
+  ""
+);
 const POLL_INTERVAL_MS = 15000;
+const REQUEST_TIMEOUT_MS = 10000;
 const DEFAULT_CENTER: [number, number] = [3.451, -76.5322];
 
 delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
@@ -23,6 +27,73 @@ interface UbicacionActiva {
   humedad: number;
   descripcion: string;
   timestamp: string;
+  stale?: boolean;
+}
+
+interface FetchState {
+  warning: string;
+  error: string;
+}
+
+function toNumber(value: unknown) {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeUbicacion(value: unknown): UbicacionActiva | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const dispositivoId =
+    typeof record.dispositivoId === "string" && record.dispositivoId.trim()
+      ? record.dispositivoId.trim()
+      : null;
+  const lat = toNumber(record.lat);
+  const lng = toNumber(record.lng);
+  const temperatura = toNumber(record.temperatura);
+  const humedad = toNumber(record.humedad);
+  const descripcion =
+    typeof record.descripcion === "string" && record.descripcion.trim()
+      ? record.descripcion.trim()
+      : "Sin descripcion";
+  const timestamp =
+    typeof record.timestamp === "string" && !Number.isNaN(new Date(record.timestamp).getTime())
+      ? record.timestamp
+      : new Date().toISOString();
+
+  if (!dispositivoId || lat === null || lng === null || temperatura === null || humedad === null) {
+    return null;
+  }
+
+  return {
+    dispositivoId,
+    lat,
+    lng,
+    temperatura,
+    humedad,
+    descripcion,
+    timestamp,
+    stale: Boolean(record.stale),
+  };
+}
+
+function formatNumber(value: number, digits: number) {
+  return Number.isFinite(value) ? value.toFixed(digits) : "--";
+}
+
+function formatTimestamp(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Sin fecha";
+  }
+
+  return date.toLocaleString("es-CO", {
+    dateStyle: "short",
+    timeStyle: "medium",
+  });
 }
 
 function MapViewport({ dispositivos }: { dispositivos: UbicacionActiva[] }) {
@@ -39,51 +110,52 @@ function MapViewport({ dispositivos }: { dispositivos: UbicacionActiva[] }) {
       return;
     }
 
-    const bounds = L.latLngBounds(
-      dispositivos.map((item) => [item.lat, item.lng] as [number, number])
-    );
-
+    const bounds = L.latLngBounds(dispositivos.map((item) => [item.lat, item.lng] as [number, number]));
     map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
   }, [dispositivos, map]);
 
   return null;
 }
 
-function formatTimestamp(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "Sin fecha";
-  }
-
-  return date.toLocaleString("es-CO", {
-    dateStyle: "short",
-    timeStyle: "medium",
-  });
-}
-
 function App() {
   const [dispositivos, setDispositivos] = useState<UbicacionActiva[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [fetchState, setFetchState] = useState<FetchState>({ error: "", warning: "" });
   const [lastSync, setLastSync] = useState("");
   const [isCompact, setIsCompact] = useState(() => window.innerWidth < 980);
 
   useEffect(() => {
     let isMounted = true;
+    let timeoutId = 0;
 
     const loadDispositivos = async () => {
       try {
-        const response = await axios.get<UbicacionActiva[]>(`${API_BASE_URL}/ubicaciones`, {
-          timeout: 8000,
+        const response = await axios.get<unknown>(`${API_BASE_URL}/ubicaciones`, {
+          timeout: REQUEST_TIMEOUT_MS,
         });
 
         if (!isMounted) {
           return;
         }
 
-        setDispositivos(response.data);
-        setError("");
+        if (!Array.isArray(response.data)) {
+          setFetchState({
+            error: "El backend respondio un formato inesperado en /ubicaciones.",
+            warning: "",
+          });
+          setLoading(false);
+          timeoutId = window.setTimeout(loadDispositivos, POLL_INTERVAL_MS);
+          return;
+        }
+
+        const sanitized = response.data.map(normalizeUbicacion).filter(Boolean) as UbicacionActiva[];
+        const droppedCount = response.data.length - sanitized.length;
+
+        setDispositivos(sanitized);
+        setFetchState({
+          error: "",
+          warning: droppedCount > 0 ? `Se omitieron ${droppedCount} registro(s) invalidos del backend.` : "",
+        });
         setLastSync(new Date().toLocaleTimeString("es-CO"));
       } catch (err) {
         if (!isMounted) {
@@ -94,20 +166,23 @@ function App() {
           ? err.response?.data?.error || err.message
           : "No fue posible cargar las ubicaciones";
 
-        setError(message);
+        setFetchState({
+          error: `Backend no disponible: ${message}`,
+          warning: "",
+        });
       } finally {
         if (isMounted) {
           setLoading(false);
+          timeoutId = window.setTimeout(loadDispositivos, POLL_INTERVAL_MS);
         }
       }
     };
 
     loadDispositivos();
-    const intervalId = window.setInterval(loadDispositivos, POLL_INTERVAL_MS);
 
     return () => {
       isMounted = false;
-      window.clearInterval(intervalId);
+      window.clearTimeout(timeoutId);
     };
   }, []);
 
@@ -134,8 +209,13 @@ function App() {
       return null;
     }
 
-    return [...ubicacionesUnicas].sort((a, b) => b.temperatura - a.temperatura)[0];
+    return [...ubicacionesUnicas].sort((a, b) => b.temperatura - a.temperatura)[0] || null;
   }, [ubicacionesUnicas]);
+
+  const showingStaleData = useMemo(
+    () => ubicacionesUnicas.length > 0 && ubicacionesUnicas.every((item) => item.stale),
+    [ubicacionesUnicas]
+  );
 
   return (
     <div
@@ -167,13 +247,11 @@ function App() {
           }}
         >
           <div>
-            <div style={{ fontSize: "12px", letterSpacing: "0.14em", color: "#486581" }}>
-              CITYLIVE
-            </div>
+            <div style={{ fontSize: "12px", letterSpacing: "0.14em", color: "#486581" }}>CITYLIVE</div>
             <h1 style={{ margin: 0, fontSize: "28px", color: "#102a43" }}>Monitoreo IoT en tiempo real</h1>
           </div>
           <div style={{ color: "#486581", fontSize: "14px" }}>
-            Última sincronización: <strong>{lastSync || "pendiente"}</strong>
+            Ultima sincronizacion: <strong>{lastSync || "pendiente"}</strong>
           </div>
         </div>
       </header>
@@ -206,7 +284,7 @@ function App() {
           >
             <div style={{ color: "#486581", fontSize: "14px", marginBottom: "8px" }}>Dispositivos activos</div>
             <div style={{ fontSize: "40px", fontWeight: 700, color: "#102a43" }}>{ubicacionesUnicas.length}</div>
-            <div style={{ color: "#486581", fontSize: "14px" }}>Ventana activa: últimos 10 minutos</div>
+            <div style={{ color: "#486581", fontSize: "14px" }}>Ventana activa: ultimos 10 minutos</div>
           </div>
 
           <div
@@ -217,13 +295,11 @@ function App() {
               boxShadow: "0 18px 40px rgba(16, 42, 67, 0.08)",
             }}
           >
-            <div style={{ color: "#486581", fontSize: "14px", marginBottom: "8px" }}>Temperatura más alta</div>
+            <div style={{ color: "#486581", fontSize: "14px", marginBottom: "8px" }}>Temperatura mas alta</div>
             <div style={{ fontSize: "28px", fontWeight: 700, color: "#d64545" }}>
-              {hottest ? `${hottest.temperatura.toFixed(1)} °C` : "--"}
+              {hottest ? `${formatNumber(hottest.temperatura, 1)} °C` : "--"}
             </div>
-            <div style={{ color: "#486581", fontSize: "14px" }}>
-              {hottest ? hottest.dispositivoId : "Sin datos"}
-            </div>
+            <div style={{ color: "#486581", fontSize: "14px" }}>{hottest ? hottest.dispositivoId : "Sin datos"}</div>
           </div>
 
           <div
@@ -237,10 +313,16 @@ function App() {
             }}
           >
             <div style={{ fontSize: "18px", fontWeight: 700, color: "#102a43" }}>Estado del sistema</div>
-            <div style={{ color: error ? "#b42318" : "#0f766e", fontSize: "14px" }}>
-              {error ? `Error de red: ${error}` : loading ? "Cargando datos..." : "Conectado al backend"}
+            <div style={{ color: fetchState.error ? "#b42318" : "#0f766e", fontSize: "14px" }}>
+              {fetchState.error ? fetchState.error : loading ? "Cargando datos..." : "Conectado al backend"}
             </div>
-            {ubicacionesUnicas.length === 0 && !loading ? (
+            {showingStaleData ? (
+              <div style={{ color: "#9a6700", fontSize: "14px" }}>
+                Mostrando la ultima ubicacion conocida de cada dispositivo.
+              </div>
+            ) : null}
+            {fetchState.warning ? <div style={{ color: "#9a6700", fontSize: "14px" }}>{fetchState.warning}</div> : null}
+            {ubicacionesUnicas.length === 0 && !loading && !fetchState.error ? (
               <div style={{ color: "#486581", fontSize: "14px" }}>
                 No hay dispositivos reportando en este momento.
               </div>
@@ -272,14 +354,19 @@ function App() {
               >
                 <div style={{ fontWeight: 700, color: "#102a43" }}>{item.dispositivoId}</div>
                 <div style={{ color: "#486581", fontSize: "14px" }}>
-                  {item.lat.toFixed(4)}, {item.lng.toFixed(4)}
+                  {formatNumber(item.lat, 4)}, {formatNumber(item.lng, 4)}
                 </div>
                 <div style={{ marginTop: "6px", color: "#102a43" }}>
-                  {item.temperatura.toFixed(1)} °C · {item.descripcion}
+                  {formatNumber(item.temperatura, 1)} °C · {item.descripcion}
                 </div>
                 <div style={{ color: "#486581", fontSize: "13px", marginTop: "4px" }}>
-                  Humedad {item.humedad}% · {formatTimestamp(item.timestamp)}
+                  Humedad {formatNumber(item.humedad, 0)}% · {formatTimestamp(item.timestamp)}
                 </div>
+                {item.stale ? (
+                  <div style={{ color: "#9a6700", fontSize: "12px", marginTop: "4px" }}>
+                    Ultimo dato conocido
+                  </div>
+                ) : null}
               </article>
             ))}
           </div>
@@ -307,15 +394,21 @@ function App() {
                   <div style={{ minWidth: "180px" }}>
                     <strong>{item.dispositivoId}</strong>
                     <br />
-                    🌡️ {item.temperatura.toFixed(1)} °C
+                    Temperatura: {formatNumber(item.temperatura, 1)} °C
                     <br />
-                    📍 {item.lat.toFixed(5)}, {item.lng.toFixed(5)}
+                    Ubicacion: {formatNumber(item.lat, 5)}, {formatNumber(item.lng, 5)}
                     <br />
-                    💧 {item.humedad}%
+                    Humedad: {formatNumber(item.humedad, 0)}%
                     <br />
-                    ☁️ {item.descripcion}
+                    Clima: {item.descripcion}
                     <br />
-                    🕒 {formatTimestamp(item.timestamp)}
+                    Actualizado: {formatTimestamp(item.timestamp)}
+                    {item.stale ? (
+                      <>
+                        <br />
+                        Estado: Ultimo dato conocido
+                      </>
+                    ) : null}
                   </div>
                 </Popup>
               </Marker>
